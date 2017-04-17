@@ -1,0 +1,318 @@
+// @flow
+"use strict";
+
+const __ = {
+  Immutable: require("immutable"),
+  superagent: require("superagent"),
+  hasRequired: function hasRequired(a, b) {
+    a = new Set(a)
+    const s = new Set([...b].filter(x => !a.has(x)))
+
+    if (s.size > 0) {
+      throw new TypeError(`Missing required keys: ${Array.from(s.values()).join(", ")}`)
+    }
+  },
+  createModel: function createModel(model, data) {
+    if (data != null) {
+      if (Array.isArray(model)) {
+        return data.map(d => new(model[0])(d))
+      }
+      return new(model)(data)
+    }
+  },
+  request: function request(method, endpoint, options) {
+    const { model, query, body, files, fields, headers, contentType } = options
+
+    const url = `${this.baseUrl}${endpoint}`
+
+    let req = __.superagent(method, url)
+      .set(Object.assign({}, this.headers, headers))
+      .query(Object.assign({}, this.query, query))
+
+    if (contentType) {
+      req = req.type(contentType)
+    }
+
+    if (options.query) {
+      req = req.query(options.query)
+    }
+
+    if (contentType === "multipart/form-data") {
+      if (files) {
+        for (const key in stripNull(files)) {
+          if (files[key] == null) {
+            continue
+          }
+
+          req = req.attach(key, files[key])
+        }
+      }
+
+      if (fields) {
+        for (const key in fields) {
+          if (fields[key] == null) {
+            continue
+          }
+
+          req = req.field(key, fields[key])
+        }
+      }
+    } else if (body) {
+      req = req.send(body)
+    }
+
+    return req.then(res => {
+      if (res.error) {
+        const err = new Error(`Status code was not successful: ${res.status}`)
+
+        err.response = res
+        throw err
+      }
+
+      if (model) {
+        return __.createModel(model, res.body)
+      }
+
+      return res.body
+    })
+  }
+}
+
+__.Enum = class Enum {
+  constructor(baseClass, map) {
+    class EnumProperty extends baseClass {
+      constructor(key, value) {
+        super()
+
+        this.value = value
+        this.key = key
+
+        this.symbol = Symbol.for(key)
+
+        Object.freeze(this)
+      }
+
+      inspect() {
+        return `EnumProp(${baseClass.name}.${this.key})`
+      }
+
+      toString() {
+        return this.key
+      }
+
+      valueOf() {
+        return this.value
+      }
+
+      toJSON() {
+        return this.value
+      }
+    }
+
+    Object.defineProperty(this, "class", { value: baseClass })
+
+    if (Array.isArray(map)) {
+      map = map.reduce((o, k, i) => {
+        if (typeof k !== "string") {
+          throw new TypeError("Enum keys must all be strings")
+        }
+
+        if (o[k] != null) {
+          throw new TypeError("Enum keys must be unique")
+        }
+
+        o[k] = i
+        return o
+      }, {})
+    }
+
+    for (const key in map) {
+      Object.defineProperty(this, key, {
+        value: new EnumProperty(key, map[key]),
+        enumerable: true
+      })
+    }
+
+    Object.freeze(this)
+  }
+
+  from(value) {
+    for (const key in this) {
+      if (this[key].valueOf() === value) {
+        return this[key]
+      }
+    }
+
+    throw new TypeError(`No enum property found for value ${value}`)
+  }
+
+  inspect() {
+    return `Enum(${this.class.name})`
+  }
+
+  toString() {
+    return this.class.toString()
+  }
+}
+
+class {{ api.info.title | class }}Api {
+  constructor(options) {
+    this.host = options.host || "{{ api.host }}"
+    this.scheme = options.scheme || "{{ api.schemes[0] }}"
+    this.headers = options.headers || {}
+    this.query = options.query || {}
+  }
+
+  get baseUrl() {
+    return `${this.scheme}://${this.host}`
+  }
+
+  {%- for op in api.operations() %}
+  /*
+  {%- filter indent(2) %}
+  {% filter trim -%}
+  {{ op.summary | safe }}
+
+  {{ op.description | safe }}
+  {%- endfilter -%}{%- endfilter %}
+  */
+  {{ op.operationId | variable }}(params = {}) {
+    const o = {}
+
+{%- if op.returns %}
+    o.model = {{ op.returns | type }}
+{%- endif %}
+
+{%- if op.parameters %}
+{%- if op.parameters.body() != null %}
+    o.body = params.{{ op.parameters.body().name | variable }}.toJSON()
+{%- elif op.parameters.query().length > 0 %}
+    o.query = {}
+{%- for fd in op.parameters.query() %}
+    o.query["{{ fd.name }}"] = params.{{ fd.name | variable }}
+{%- endfor %}
+{%- elif op.parameters.formData().length > 0 %}
+    o.contentType = "{{ op.consume }}"
+    o.files = {}
+    o.fields = {}
+{%- for fd in op.parameters.formData() %}
+
+{%- if fd.type === "file" %}
+    o.files["{{ fd.name }}"] = params.{{ fd.name | variable }}
+{%- elif fd.format === "json" %}
+    o.fields["{{ fd.name }}"] = JSON.stringify(params.{{ fd.name | variable }}, null, 0)
+{%- else %}
+    o.fields["{{ fd.name }}"] = params.{{ fd.name | variable }}
+{%- endif %}
+
+{%- endfor %}
+
+{%- endif %}
+{%- endif %}
+    return __.request.call(this, "{{ op.method }}", `{{ api.basePath }}{{ op | url }}`, o)
+  }
+{%- endfor %}
+}
+{% for name, defn in api.definitions %}
+{%- if defn.enum %}
+const {{ name | class }} = new __.Enum(class {{ name | class }} {}, {
+{%- for case in defn.enum %}
+  "{{ case | variable }}": "{{ case }}",
+{%- endfor %}
+})
+{%- elif defn.type === "object" %}
+class {{ name | class }} extends __.Immutable.Record({
+{%- for propName, propDefn in defn.properties %}
+  {%- if propDefn.isRequired() %}
+  "{{ propName | variable }}": {% if propDefn.default %}{{ propDefn | defaultValue }}{% else %}undefined{% endif %},
+  {%- endif %}
+{%- endfor %}
+{%- for propName, propDefn in defn.properties %}
+  {%- if not propDefn.isRequired() %}
+  "{{ propName | variable }}": {% if propDefn.default %}{{ propDefn | defaultValue }}{% else %}undefined{% endif %},
+  {%- endif %}
+{%- endfor %}
+}) {
+  constructor(params) {
+    {%- if defn.hasRequired() %}
+    __.hasRequired(Object.keys(params), [{{ defn.properties | requiredProps | safe }}])
+    {% endif %}
+    {%- if defn.hasEnums() %}
+    const { {{ defn | enums }} } = {{ name | class }}
+    {%- endif %}
+    const p = {}
+  {% for propName, propDefn in defn.properties %}
+  {%- if propDefn.isRequired() %}
+    {%- if propDefn.type === "object" and propDefn | type !== "Object" %}
+    p.{{ propName | variable }} = __.createModel({{ propDefn | type }}, params["{{ propName }}"])
+    {%- elif propDefn.type === "array" and propDefn.items.type === "object" and propDefn.items | type !== "Object" %}
+    p.{{ propName | variable }} = __.createModel({{ propDefn | type }}, params["{{ propName }}"])
+    {%- elif propDefn.enum %}
+    p.{{ propName | variable }} = {{ propDefn | type }}.from(params["{{ propName }}"])
+    {%- else %}
+    p.{{ propName | variable }} = params["{{ propName }}"]
+    {%- endif %}
+  {%- else %}
+    if (params["{{ propName }}"] != null) {
+    {%- if propDefn.type === "object" and propDefn | type !== "Object" %}
+      p.{{ propName | variable }} = __.createModel({{ propDefn | type }}, params["{{ propName }}"])
+    {%- elif propDefn.type === "array" and propDefn.items.type === "object" and propDefn.items | type !== "Object" %}
+      p.{{ propName | variable }} = __.createModel({{ propDefn | type }}, params["{{ propName }}"])
+    {%- elif propDefn.enum %}
+      p.{{ propName | variable }} = {{ propDefn | type }}.from(params["{{ propName }}"])
+    {%- else %}
+      p.{{ propName | variable }} = params["{{ propName }}"]
+    {%- endif %}
+    }
+  {%- endif %}
+  {%- endfor %}
+
+    super(p)
+  }
+
+  toJSON() {
+    const o = {}
+
+    {% for propName, propDefn in defn.properties %}
+    {%- if propDefn.isRequired() -%}
+    {%- if propDefn.type === "array" and propDefn.items.type === "object" and propDefn.items | type !== "Object" -%}
+    o["{{ propName }}"] = this.{{ propName | variable }}.map(x => x.toJSON())
+    {%- elif propDefn.enum or propDefn.type === "object" and propDefn | type !== "Object" -%}
+    o["{{ propName }}"] = this.{{ propName | variable }}.toJSON()
+    {%- else -%}
+    o["{{ propName }}"] = this.{{ propName | variable }}
+    {%- endif -%}
+    {%- else -%}
+    if (this.{{ propName | variable }} != null) {
+    {%- if propDefn.type === "array" and propDefn.items.type === "object" and propDefn.items | type !== "Object" %}
+      o["{{ propName }}"] = this.{{ propName | variable }}.map(x => x.toJSON())
+    {%- elif propDefn.enum or propDefn.type === "object" and propDefn | type !== "Object" %}
+      o["{{ propName }}"] = this.{{ propName | variable }}.toJSON()
+    {%- else %}
+      o["{{ propName }}"] = this.{{ propName | variable }}
+    {%- endif %}
+    }
+    {%- endif %}
+    {% endfor %}
+    return o
+  }
+}
+{% endif -%}
+
+{% for enumName, enumBody in defn.enums() %}
+{{ name | class}}.{{ enumBody.name | class }} = new __.Enum(class {{ enumBody.name | class }} {}, {
+{%- for case in enumBody %}
+  "{{ case | variable }}": "{{ case }}",
+{%- endfor %}
+})
+{% endfor %}
+{%- endfor %}
+{{ api.info.title | class }}Api.models = {
+{%- for name, defn in api.definitions %}
+{%- if defn.type !== "array" %}
+  {{ name | class }},
+{%- endif %}
+{%- endfor %}
+}
+
+module.exports = {{ api.info.title | class }}Api

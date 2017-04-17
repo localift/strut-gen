@@ -1,0 +1,394 @@
+// Generated; do not edit.
+
+import RxSwift
+import Moya
+import Moya_ModelMapper
+import Wrap
+import Mapper
+
+struct {{ api.info.title | class }}Config {
+    enum ApiEndpoints: String {
+        case dev = "https://{{ api.host }}"
+    }
+
+    static var headers: [String: String] = [:]
+
+    static var endpoint = ApiEndpoints.dev
+
+    static var baseUrl: URL {
+        return URL(string: self.endpoint.rawValue)!
+    }
+
+    static func endpointClosure(target: {{ api.info.title | class }}) -> Endpoint<{{ api.info.title | class }}> {
+        let url = target.baseURL.appendingPathComponent(target.path).absoluteString
+
+        let endpoint = Endpoint<{{ api.info.title | class }}>(
+            url: url,
+            sampleResponseClosure: { .networkResponse(200, target.sampleData) },
+            method: target.method,
+            parameters: target.parameters,
+            parameterEncoding: target.parameterEncoding
+        )
+
+        return endpoint.adding(newHTTPHeaderFields: {{ api.info.title | class }}Config.headers)
+    }
+}
+
+public enum {{ api.info.title | class }} {
+{%- for op in api.operations() %}
+    case {{ op.operationId | variable }}{{ op | params }}
+{%- endfor %}
+}
+
+fileprivate let Provider = RxMoyaProvider<{{ api.info.title | class }}>(
+    endpointClosure: {{ api.info.title | class }}Config.endpointClosure,
+    plugins: [
+        NetworkLoggerPlugin()
+    ]
+)
+
+extension {{ api.info.title | class }}: TargetType {
+    public var baseURL: URL {
+        return {{ api.info.title | class }}Config.baseUrl
+    }
+
+    public var parameterEncoding: Moya.ParameterEncoding {
+        if self.method == .get {
+            return URLEncoding()
+        }
+
+        switch self {
+{%- for op in api.operations() %}
+{%- if op.consume === "application/x-www-form-urlencoded" %}
+        case .{{ op.operationId | variable }}:
+            return URLEncoding()
+{%- endif %}
+{%- endfor %}
+        default:
+            break
+        }
+
+        return JSONEncoding()
+    }
+
+    public var path: String {
+        switch self {
+{%- for op in api.operations() %}
+        case .{{ op.operationId | variable }}{{ op | caseParams }}:
+            return "{{ api.basePath }}{{ op | url }}"
+{%- endfor %}
+        }
+    }
+
+    public var method: Moya.Method {
+        switch self {
+{%- for op in api.operations() %}
+        case .{{ op.operationId | variable }}:
+            return .{{ op.method | lower }}
+{%- endfor %}
+        }
+    }
+
+    public var parameters: [String: Any]? {
+        switch self {
+{%- for op in api.operations() %}
+{%- if op.parameters and op.consume === "application/json" %}
+{%- if op.parameters.body() != null %}
+        case .{{ op.operationId | variable }}{{ op | caseParams }}:
+            return try! kernel.wrap({{ op.parameters.body().name | variable }})
+{%- endif %}
+{%- elif op.parameters and op.consume === "application/x-www-form-urlencoded" %}
+{%- if op.parameters.formData().length > 0 %}
+        case .{{ op.operationId | variable }}{{ op | caseParams }}:
+            var _o = [String: Any]()
+    {%- for fd in op.parameters.formData() %}
+    {%- if fd.required %}
+            _o["{{ fd.name }}"] = {{ fd.name | variable }}
+    {%- else %}
+            if let {{ fd.name | variable }} = {{ fd.name | variable }} {
+                _o["{{ fd.name }}"] = {{ fd.name | variable }}
+            }
+    {%- endif %}
+    {%- endfor %}
+            return _o.isEmpty ? nil : _o
+{%- elif op.parameters and op.parameters.query().length > 0 %}
+        case .{{ op.operationId | variable }}{{ op | caseParams }}:
+            var _o = [String: Any]()
+    {%- for fd in op.parameters.query() %}
+    {%- if fd.required %}
+            _o["{{ fd.name }}"] = {{ fd.name | variable }}
+    {%- else %}
+            if let {{ fd.name | variable }} = {{ fd.name | variable }} {
+                _o["{{ fd.name }}"] = {{ fd.name | variable }}
+            }
+    {%- endif %}
+    {%- endfor %}
+            return _o.isEmpty ? nil : _o
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+        default:
+            return nil
+        }
+    }
+
+    public var sampleData: Data {
+        return Data()
+    }
+
+    public var task: Task {
+        if let mpb = self.multipartBody {
+            return .upload(.multipart(mpb))
+        }
+
+        return .request
+    }
+
+    private var multipartBody: [MultipartFormData]? {
+        switch self {
+{%- for op in api.operations() %}
+{%- if op.parameters and op.consume === "multipart/form-data" %}
+{%- if op.parameters.formData().length > 0 %}
+        case .{{ op.operationId | variable }}{{ op | caseParams }}:
+            var _o = [MultipartFormData]()
+{%- for fd in op.parameters.formData() %}
+{%- if fd.type === "file" %}
+{%- if fd.required %}
+            _o.append(MultipartFormData(provider: .file({{ fd.name | variable }}), name: "{{ fd.name }}"))
+{%- else %}
+            if let {{ fd.name | variable }} = {{ fd.name | variable }} {
+                _o.append(MultipartFormData(provider: .file({{ fd.name | variable }}), name: "{{ fd.name }}"))
+            }
+{%- endif %}
+{%- elif fd.type === "string" %}
+{%- if fd.format === "json" %}
+{%- if fd.required %}
+            _o.append(MultipartFormData(provider: .data(try! kernel.jsonWrap({{ fd.name | variable }})), name: "{{ fd.name }}"))
+{%- else %}
+            if let {{ fd.name | variable }} = {{ fd.name | variable }} {
+                _o.append(MultipartFormData(provider: .data(try! kernel.jsonWrap({{ fd.name | variable }})), name: "{{ fd.name }}"))
+            }
+{%- endif %}
+{%- elif fd.required %}
+            if let data = {{ fd.name | variable }}.data(using: .utf8) {
+                _o.append(MultipartFormData(provider: .data(data), name: "{{ fd.name }}"))
+            }
+{%- else %}
+            if let {{ fd.name | variable }} = {{ fd.name | variable }}, let data = {{ fd.name | variable }}.data(using: .utf8) {
+                _o.append(MultipartFormData(provider: .data(data), name: "{{ fd.name }}"))
+            }
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+            return _o.isEmpty ? nil : _o
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+        default:
+            return nil
+        }
+    }
+}
+
+// APIs
+
+{%- for tag, ops in api.taggedOps() %}
+class {{ tag | class }}Api {
+{%- for op in ops %}
+    /**
+    {{ op.summary | safe | trim | indent(4) }}
+{%- if op.description != null %}
+    {{ op.description | safe | indent(4, true) | trim }}
+{% endif %}
+    */
+    static func {{ op.operationId | variable }}{{ op | params(true) }} -> Observable<{{ op.returns | type("Response") }}> {
+        return Provider.request(.{{ op.operationId | variable }}{{ op | paramVals }})
+            .filterSuccessfulStatusAndRedirectCodes()
+{%- if op.returns %}
+{%- if op.returns.type === "object" %}
+            .mapObject(type: {{ op.returns | type }}.self)
+{%- elif op.returns.type === "array" %}
+            .mapArray(type: {{ op.returns.items | type }}.self)
+{%- endif %}
+{%- endif %}
+    }
+{% endfor %}
+}
+{% endfor %}
+
+// Models
+
+{% for name, defn in api.definitions %}
+{%- if defn.enum %}
+public enum {{ name | class }}: String {
+{%- for case in defn.enum %}
+    case {{ case | variable }} = "{{ case }}"
+{%- endfor %}
+}
+{%- else %}
+public struct {{ name | class }}: Mappable, Equatable {
+{%- for enumName, enumBody in defn.enums() %}
+    public enum {{ enumBody.name | class }}: String {
+{%- for case in enumBody %}
+        case {{ case | variable }} = "{{ case }}"
+{%- endfor %}
+    }
+{% endfor %}
+{%- for propName, propDefn in defn.properties %}
+    let {{ propName | variable }}: {{ propDefn | type }}{% if not propDefn.isRequired() and propDefn.default == null %}?{% endif %}
+{%- endfor %}
+
+    public init({{ defn | modelParams }}) {
+{%- for propName, propDefn in defn.properties %}
+        self.{{ propName | variable }} = {{ propName | variable }}
+{%- endfor %}
+    }
+
+    public func copy({{ defn | modelCopyParams }}) -> {{ name | class }} {
+        return {{ name | class }}({{ defn | modelCopyVals }})
+    }
+
+    public init(map: Mapper) throws {
+{%- for propName, propDefn in defn.properties %}
+        {{ propDefn | mapperFrom(propName) | safe }}
+{%- endfor %}
+    }
+
+    public static func ==(lhs: {{ name | class }}, rhs: {{ name | class }}) -> Bool {
+        {%- for propName, propDefn in defn.properties %}
+        {%- if not propDefn.isRequired() and propDefn.default == null %}
+        switch (lhs.{{ propName | variable }}, rhs.{{ propName | variable }}) {
+        case (.none, .none): break
+        case let (.some(a), .some(b)):
+          if a == b { break } else { return false }
+        default:
+          return false
+        }
+        {%- else %}
+        if lhs.{{ propName | variable }} != rhs.{{ propName | variable }} {
+            return false
+        }
+        {%- endif %}
+        {%- endfor %}
+
+        return true
+    }
+
+    public static func !=(lhs: {{ name | class }}, rhs: {{ name | class }}) -> Bool {
+        return !(lhs == rhs)
+    }
+}
+{%- endif %}
+{% endfor -%}
+
+// Kernel
+
+extension Date: Convertible {
+    public static func fromMap(_ value: Any) throws -> Date {
+        guard let string = value as? String else {
+            throw MapperError.convertibleError(value: value, type: String.self)
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+
+        let formats = [
+            "yyyy-MM-dd",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ssZZZZZ",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ"
+        ]
+
+        for i in 0..<formats.count {
+            dateFormatter.dateFormat = formats[i]
+
+            let date = dateFormatter.date(from: string)
+
+            if (date != nil) {
+                return date!
+            }
+        }
+
+        throw MapperError.convertibleError(value: value, type: String.self)
+    }
+}
+
+extension Int32: Convertible {
+    public static func fromMap(_ value: Any) throws -> Int32 {
+        if let value = value as? Int {
+            return Int32(value)
+        }
+
+        throw MapperError.convertibleError(value: value, type: Int32.self)
+    }
+}
+
+extension Int64: Convertible {
+    public static func fromMap(_ value: Any) throws -> Int64 {
+        if let value = value as? Int {
+            return Int64(value)
+        }
+
+        throw MapperError.convertibleError(value: value, type: Int64.self)
+    }
+}
+
+fileprivate struct Kernel {
+    fileprivate let dateFormatter: DateFormatter = {
+        let it = DateFormatter()
+        it.locale = Locale(identifier: "en_US_POSIX")
+        it.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+        return it
+    }()
+
+    func wrap<T>(_ object: T) throws -> WrappedDictionary {
+        return try Wrap.wrap(object, dateFormatter: self.dateFormatter)
+    }
+
+    func jsonWrap<T>(_ object: T) throws -> Data {
+        let dict = try self.wrap(object)
+        return try JSONSerialization.data(withJSONObject: dict)
+    }
+
+    func dateAsString(_ date: Date) -> String? {
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+
+        return dateFormatter.string(from: date)
+    }
+
+    func base64AsString(_ base64: String) -> String? {
+        if let data = Data(base64Encoded: base64) {
+            return String(data: data, encoding: .utf8)
+        }
+
+        return nil
+    }
+
+    func dataToBase64(_ data: Data) -> String? {
+        return data.base64EncodedString()
+    }
+}
+
+fileprivate let kernel = Kernel()
+
+func transformWrappedDictionary(_ value: Any) throws -> WrappedDictionary {
+    guard let dict = value as? WrappedDictionary else {
+        throw MapperError.convertibleError(value: value, type: WrappedDictionary.self)
+    }
+
+    return dict
+}
+
+public func ==(lhs: [String: Any], rhs: [String: Any]) -> Bool {
+    if let a = try? kernel.jsonWrap(lhs), let b = try? kernel.jsonWrap(rhs) {
+        return a == b
+    }
+
+    return false
+}
+
+public func !=(lhs: [String: Any], rhs: [String: Any]) -> Bool {
+    return !(lhs == rhs)
+}
